@@ -9,6 +9,7 @@ const boardEl = $('#board');
 const statusEl = $('#status');
 const diffSel = $('#difficulty');
 const notesBtn = $('#notes');
+const pauseBtn = $('#pause');
 const cells = [];
 let S = null; // current game state
 
@@ -29,6 +30,7 @@ document.querySelectorAll('[data-d]').forEach((btn) =>
 $('#undo').addEventListener('click', undo);
 $('#hint').addEventListener('click', useHint);
 notesBtn.addEventListener('click', toggleNotes);
+pauseBtn.addEventListener('click', togglePause);
 $('#new').addEventListener('click', newGame);
 
 window.addEventListener('keydown', (e) => {
@@ -36,6 +38,7 @@ window.addEventListener('keydown', (e) => {
   if (/^[1-9]$/.test(e.key)) enterDigit(Number(e.key));
   else if (e.key === '0' || e.key === 'Backspace' || e.key === 'Delete') enterDigit(0);
   else if (e.key === 'n' || e.key === 'N') toggleNotes();
+  else if (e.key === 'p' || e.key === 'P') togglePause();
   else if (e.key === 'z' && (e.metaKey || e.ctrlKey)) undo();
   else if (e.key.startsWith('Arrow')) moveSelection(e.key);
   else return;
@@ -57,8 +60,8 @@ function newState(difficulty) {
     notes: new Array(81).fill(0), // bit d set = pencil mark d
     selected: -1,
     notesMode: false,
+    paused: false,
     undo: [],
-    elapsed: 0, // milliseconds spent, only counted while visible and unsolved
     hints: 0,
     won: false,
   };
@@ -72,7 +75,7 @@ function loadSave() {
     d.notes = Array.isArray(d.notes) && d.notes.length === 81 ? d.notes : new Array(81).fill(0);
     d.undo = Array.isArray(d.undo) ? d.undo : [];
     d.hints = d.hints || 0;
-    d.elapsed = d.elapsed || 0;
+    d.paused = !!d.paused;
     d.selected = -1;
     return d;
   } catch (e) {
@@ -91,6 +94,7 @@ function pushUndo() {
 
 // ---------- actions ----------
 function select(i) {
+  if (S.paused) return;
   S.selected = i;
   render();
 }
@@ -107,7 +111,7 @@ function moveSelection(key) {
 
 function enterDigit(d) {
   const i = S.selected;
-  if (i < 0 || S.won || S.puzzle[i]) return;
+  if (i < 0 || S.won || S.paused || S.puzzle[i]) return;
   if (S.notesMode && d) {
     if (S.board[i]) return;
     pushUndo();
@@ -123,7 +127,7 @@ function enterDigit(d) {
 }
 
 function useHint() {
-  if (S.won) return;
+  if (S.won || S.paused) return;
   const h = findHint(S.board, S.solution);
   if (!h) return;
   pushUndo();
@@ -135,7 +139,7 @@ function useHint() {
 }
 
 function undo() {
-  if (!S.undo.length) return;
+  if (S.paused || !S.undo.length) return;
   const s = S.undo.pop();
   S.board = s.board;
   S.notes = s.notes;
@@ -143,7 +147,15 @@ function undo() {
 }
 
 function toggleNotes() {
+  if (S.paused) return;
   S.notesMode = !S.notesMode;
+  render();
+  save();
+}
+
+function togglePause() {
+  if (S.won) return;
+  S.paused = !S.paused;
   render();
   save();
 }
@@ -166,18 +178,11 @@ function finishMove() {
 }
 
 // ---------- drawing ----------
-function fmtTime(ms) {
-  const total = Math.floor(ms / 1000);
-  const h = Math.floor(total / 3600);
-  const m = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
-  const s = String(total % 60).padStart(2, '0');
-  return h ? `${h}:${m}:${s}` : `${m}:${s}`;
-}
-
 function render() {
   const sel = S.selected;
   const selVal = sel >= 0 ? S.board[sel] : 0;
   const peers = new Set(sel >= 0 ? PEERS[sel] : []);
+  boardEl.classList.toggle('paused', S.paused);
 
   for (let i = 0; i < 81; i++) {
     const el = cells[i];
@@ -187,13 +192,17 @@ function render() {
     if (c === 2 || c === 5) cls += ' edge-r';
     if (r === 2 || r === 5) cls += ' edge-b';
     if (S.puzzle[i]) cls += ' given';
-    if (i === sel) cls += ' sel';
-    else if (peers.has(i)) cls += ' peer';
-    if (selVal && v === selVal && i !== sel) cls += ' same';
-    if (v && v !== S.solution[i]) cls += ' bad';
+    if (!S.paused) {
+      if (i === sel) cls += ' sel';
+      else if (peers.has(i)) cls += ' peer';
+      if (selVal && v === selVal && i !== sel) cls += ' same';
+      if (v && v !== S.solution[i]) cls += ' bad';
+    }
     el.className = cls;
 
-    if (v) {
+    if (S.paused) {
+      el.textContent = ''; // hide the numbers while paused
+    } else if (v) {
       el.textContent = v;
     } else if (S.notes[i]) {
       el.innerHTML = '<div class="notes">' +
@@ -204,25 +213,22 @@ function render() {
     }
   }
 
+  pauseBtn.textContent = S.paused ? 'Resume' : 'Pause';
+  pauseBtn.setAttribute('aria-pressed', String(S.paused));
   notesBtn.classList.toggle('on', S.notesMode);
   notesBtn.setAttribute('aria-pressed', String(S.notesMode));
 
   if (S.won) {
-    statusEl.textContent = `Solved in ${fmtTime(S.elapsed)}. Nice work! Start a new game when you're ready.`;
+    statusEl.textContent = 'Solved! Nice work. Start a new game when you\'re ready.';
+  } else if (S.paused) {
+    statusEl.textContent = `${LABEL[S.difficulty]} · Paused. Tap Resume to carry on.`;
   } else {
     const mode = S.notesMode ? ' · Notes on' : '';
-    statusEl.textContent = `${LABEL[S.difficulty]} · ${fmtTime(S.elapsed)} · Hints ${S.hints}${mode}`;
+    statusEl.textContent = `${LABEL[S.difficulty]} · Hints ${S.hints}${mode}`;
   }
 }
 
 // ---------- start ----------
-setInterval(() => {
-  if (!S || S.won || document.hidden) return;
-  S.elapsed += 1000;
-  if (S.elapsed % 10000 === 0) save();
-  render();
-}, 1000);
-
 S = loadSave() || newState('medium');
 diffSel.value = S.difficulty;
 render();

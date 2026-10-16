@@ -147,9 +147,13 @@ h1 {
   justify-content: center;
 }
 
+.board.paused {
+  background-image: repeating-linear-gradient(45deg, var(--line) 0 1px, transparent 1px 8px);
+}
+
 .tools {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   margin: 14px 0 10px;
 }
